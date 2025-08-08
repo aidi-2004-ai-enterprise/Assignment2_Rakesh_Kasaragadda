@@ -2,9 +2,9 @@ fastapi
 uvicorn
 pydantic
 xgboost
-scikit-learn
 pandas
 numpy
+scikit-learn
 joblib
+python-dotenv
 google-cloud-storage
-
