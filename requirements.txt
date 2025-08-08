@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+xgboost
+scikit-learn
+pandas
+numpy
+joblib
+google-cloud-storage
+
