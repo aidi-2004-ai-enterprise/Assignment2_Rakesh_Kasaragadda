@@ -6,7 +6,7 @@ import xgboost as xgb
 import os, joblib, logging
 from dotenv import load_dotenv
 
-# Optional import, only used if GCS is configured
+# Optional import, only used if google-cloud-storage is installed
 try:
     from google.cloud import storage
     GCS_AVAILABLE = True
@@ -29,7 +29,7 @@ class Sex(str, Enum):
     female = "female"
 
 class PenguinFeatures(BaseModel):
-    # Add validation to force realistic ranges -> invalid values raise 422
+    """Input schema with realistic bounds -> invalid -> 422."""
     bill_length_mm: float = Field(gt=0, le=70, description="Bill length in mm (>0 and ≤70)")
     bill_depth_mm: float  = Field(gt=0, le=30, description="Bill depth in mm (>0 and ≤30)")
     flipper_length_mm: float = Field(gt=0, le=250, description="Flipper length in mm (>0 and ≤250)")
@@ -50,12 +50,14 @@ GCS_BUCKET       = os.getenv("GCS_BUCKET_NAME")
 GCS_MODEL_BLOB   = os.getenv("GCS_MODEL_BLOB", "model.json")
 GCS_LABEL_BLOB   = os.getenv("GCS_LABEL_BLOB", "label_encoder.pkl")
 GCS_COLUMNS_BLOB = os.getenv("GCS_COLUMNS_BLOB", "columns.pkl")
+# Optional in local dev; on Cloud Run we use default creds automatically
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
 def download_from_gcs(bucket_name: str, blob_name: str, dst_path: str) -> None:
+    """Download a blob to a local path."""
     if not GCS_AVAILABLE:
         raise RuntimeError("google-cloud-storage not available")
-    client = storage.Client()
+    client = storage.Client()  # uses key if GOOGLE_APPLICATION_CREDENTIALS is set; else default creds
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
     if not blob.exists(client):
@@ -64,18 +66,30 @@ def download_from_gcs(bucket_name: str, blob_name: str, dst_path: str) -> None:
     blob.download_to_filename(dst_path)
     logger.info(f"Downloaded gs://{bucket_name}/{blob_name} -> {dst_path}")
 
-def maybe_pull_from_gcs():
-    if GCS_BUCKET and GOOGLE_APPLICATION_CREDENTIALS and GCS_AVAILABLE:
-        logger.info("Attempting to pull model artifacts from GCS...")
-        try:
-            download_from_gcs(GCS_BUCKET, GCS_MODEL_BLOB,   LOCAL_MODEL_PATH)
-            download_from_gcs(GCS_BUCKET, GCS_LABEL_BLOB,   LOCAL_ENCODER_PATH)
-            download_from_gcs(GCS_BUCKET, GCS_COLUMNS_BLOB, LOCAL_COLUMNS_PATH)
-            logger.info("Pulled all artifacts from GCS.")
-        except Exception as e:
-            logger.warning(f"GCS download failed: {e}. Falling back to local files.")
-    else:
-        logger.info("GCS not configured; using local files.")
+def maybe_pull_from_gcs() -> bool:
+    """
+    Try to pull artifacts from GCS if a bucket name is provided.
+    Works with:
+      - Local dev: GOOGLE_APPLICATION_CREDENTIALS points to a JSON key
+      - Cloud Run: default service account credentials (no key file needed)
+    """
+    if not GCS_BUCKET:
+        logger.info("No GCS_BUCKET_NAME set; using local files.")
+        return False
+    if not GCS_AVAILABLE:
+        logger.info("google-cloud-storage not installed; using local files.")
+        return False
+
+    logger.info("Attempting to pull model artifacts from GCS...")
+    try:
+        download_from_gcs(GCS_BUCKET, GCS_MODEL_BLOB,   LOCAL_MODEL_PATH)
+        download_from_gcs(GCS_BUCKET, GCS_LABEL_BLOB,   LOCAL_ENCODER_PATH)
+        download_from_gcs(GCS_BUCKET, GCS_COLUMNS_BLOB, LOCAL_COLUMNS_PATH)
+        logger.info("Pulled all artifacts from GCS.")
+        return True
+    except Exception as e:
+        logger.warning(f"GCS download failed: {e}. Falling back to local files.")
+        return False
 
 # Pull artifacts if possible, else use local
 maybe_pull_from_gcs()
@@ -92,6 +106,10 @@ except Exception as e:
     raise
 
 app = FastAPI(title="Penguin Predictor")
+
+@app.get("/")
+def root():
+    return {"message": "Penguin Predictor Active!"}
 
 @app.get("/health")
 def health():
